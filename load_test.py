@@ -157,7 +157,7 @@ def test_binary_target():
             sd_columns.append(f'20002-{assessment}.{arr_idx}')
     
     columns = columns + sd_columns
-    zarr_path = '/media/data1/ag3r/ukb/test/small_100'
+    zarr_path = '/media/data1/ag3r/ukb/test/small_1000'
     converter = Converter(DATASET_PATH, zarr_path, rows_count=1000, columns=columns, batch_size=500)
 
     converter.convert()
@@ -180,6 +180,46 @@ def test_binary_target():
     assert test.shape == (100, 4)
 
     assert list(train.columns) == ['31','50', '21002', '20002']
+
+    un, c = numpy.unique(train.iloc[:, -1], return_counts=True)
+    assert len(un) == 2
+    assert (un == numpy.array([0.0, 1.0])).all()
+    assert 100 > c[1] > 10
+    
+
+def test_binary_icd10_target():
+    columns = ['31-0.0', '50-0.0', '50-1.0', '50-2.0', '21002-0.0', '21002-1.0', '21002-2.0']
+
+    sd_columns = []
+    for assessment in range(3):
+        for arr_idx in range(223): # value from https://biobank.ctsu.ox.ac.uk/crystal/field.cgi?id=41270, array instances
+            sd_columns.append(f'41270-{assessment}.{arr_idx}')
+        
+    
+    columns = columns + sd_columns
+    zarr_path = '/media/data1/ag3r/ukb/test/small_1000'
+    converter = Converter(DATASET_PATH, zarr_path, rows_count=1000, columns=columns, batch_size=500)
+
+    converter.convert()
+
+    split_path = '/media/data1/ag3r/ukb/test/splits/random'
+    splitter = RandomSplitter(zarr_path, split_path, seed=0)
+    train, val, test = splitter.split()
+    assert len(train) == 800
+    assert len(val) == 100
+    assert len(test) == 100
+
+    loader = BinaryICDLoader('/media/data1/ag3r/ukb/test/splits/', 'random', '20002', ['31', '50', '21002'], '1226') # 1226 - hypothyroidism
+    train = loader.load_train()
+    assert train.shape == (800, 4)
+    
+    val = loader.load_val()
+    assert val.shape == (100, 4)
+
+    test = loader.load_test()
+    assert test.shape == (100, 4)
+
+    assert list(train.columns) == ['31','50', '21002', '41270']
 
     un, c = numpy.unique(train.iloc[:, -1], return_counts=True)
     assert len(un) == 2

@@ -5,7 +5,8 @@ import os
 
 
 DATASET_PATH = '/media/data1/ag3r/ukb/dataset/ukb27349.csv'
-
+BIOMARKERS_PATH = '/media/data1/ag3r/ukb/dataset/ukb42491.csv'
+ICD10_PATH = '/media/data1/ag3r/ukb/dataset/ukb44577.csv'
 
 """
 'eid': 'eid',
@@ -23,7 +24,7 @@ def test_converter():
     columns = ['31-0.0', '50-0.0', '50-1.0', '50-2.0','21002-0.0', '21002-1.0', '21002-2.0']
     
     zarr_path = '/media/data1/ag3r/ukb/test/zarr'
-    converter = Converter(DATASET_PATH, zarr_path, rows_count=20, columns=columns, batch_size=10)
+    converter = Converter([DATASET_PATH], zarr_path, rows_count=20, columns=columns, batch_size=10)
 
     converter.convert()
     
@@ -34,6 +35,28 @@ def test_converter():
     assert array['eid'][0] == 1000011
     assert 160 < numpy.nanmean(array['dataset'][:, 1]) < 180
     assert list(array['columns'][:]) == ['31-0.0', '50-0.0', '50-1.0', '50-2.0', '21002-0.0', '21002-1.0', '21002-2.0']
+
+
+def test_convert_str_columns():
+    columns = ['31-0.0', '50-0.0', '50-1.0', '50-2.0', '41270-0.0', '41270-1.0', '41270-2.0']
+    
+    zarr_path = '/media/data1/ag3r/ukb/test/zarr'
+    paths = [DATASET_PATH, ICD10_PATH]
+    converter = Converter(paths, zarr_path, rows_count=20, columns=columns, batch_size=10)
+
+    converter.convert()
+    
+    array = zarr.open_group(zarr_path, mode='r')
+    assert array['dataset'].shape == (20, 4)
+    assert array['columns'].shape == (4, )
+    assert array['eid'].shape == (20, 1)
+    assert array['eid'][0] == 1000011
+    assert 160 < numpy.nanmean(array['dataset'][:, 1]) < 180
+    assert list(array['columns'][:]) == ['31-0.0', '50-0.0', '50-1.0', '50-2.0']
+
+    assert array['str_dataset'].shape == (20, 3)
+    assert array['str_columns'].shape == (3, )
+    assert list(array['str_columns'][:]) == ['41270-0.0', '41270-1.0', '41270-2.0']
 
 
 def test_convert_all_columns():
