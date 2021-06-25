@@ -46,21 +46,25 @@ class RandomSplitter(Splitter):
 
         train, val, test = target.create_groups('train', 'val', 'test')
         dataset = source['dataset']
+        str_dataset = source['str_dataset']
         x_train, x_val, x_test = numpy.sort(x_train), numpy.sort(x_val), numpy.sort(x_test)
 
         for group, x in zip([train, val, test], [x_train, x_val, x_test]):
             group.array('eid', samples[x])
             group.array('columns', source['columns'][:])
-            group.array('column_indices', source['column_indices'][:])
+            group.array('str_columns', source['str_columns'][:])
             group.array('dates', source['dates'][:][x])
 
             new_dataset = group.zeros('dataset', shape=(0, dataset.shape[1]), chunks=dataset.chunks)
-
+            new_str_dataset = group.create('str_dataset', mode='w', shape=(0, str_dataset.shape[1]), dtype='U16', chunks=str_dataset.chunks)
             chunk_size = dataset.chunks[0]
             for chunk_start in range(0, len(x), chunk_size):
                 rows = min(dataset.shape[0] - chunk_start, chunk_size) 
                 chunk = dataset.get_orthogonal_selection((x[chunk_start: chunk_start + rows], slice(None)))
                 new_dataset.append(chunk, axis=0)
+
+                str_chunk = str_dataset.get_orthogonal_selection((x[chunk_start: chunk_start + rows], slice(None)))
+                new_str_dataset.append(str_chunk, axis=0)
 
         return list(samples[x_train]), list(samples[x_val]), list(samples[x_test])
 

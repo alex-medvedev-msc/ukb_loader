@@ -11,6 +11,16 @@ DATE_FIELDS_PATH = '/media/data1/ag3r/ukb/dataset/date_fields.csv'
 BAD_COLS_PATH = '/media/data1/ag3r/ukb/dataset/bad_cols_back.csv'
 
 
+def build_dtype_dictionary(sources: List[str]):
+    dtype_dict = {}
+    for source in sources:
+        data = pandas.read_csv(source, nrows=2000, low_memory=False)
+        converted = data.convert_dtypes(infer_objects=True, convert_string=True, convert_integer=True)
+        for column, dtype in converted.dtypes.iteritems():
+            dtype_dict[column] = dtype
+    return dtype_dict
+
+
 def get_all_columns(dataset_path: str) -> List[str]:
     with open(dataset_path, 'r') as d:
         all_columns = [c.strip().strip('"') for c in d.readline().split(',')]
@@ -72,7 +82,8 @@ class Converter:
         self.rows_count = rows_count
         self.columns = columns
         self.batch_size = batch_size
-
+        if not isinstance(datasets, List) or len(datasets) == 0:
+            raise ValueError(f'Datasets should be a list of full paths to them, not {datasets}')
         if columns is not None and 'eid' in columns:
             raise ValueError('Please remove eid from columns, it will be read anyway')
         if columns is not None:
@@ -86,14 +97,21 @@ class Converter:
         if self.rows_count is None:
             self.rows_count = 502536
 
-        self.index_dict = self._create_index_dict(self.datasets, self.all_columns, self.columns)
+        self.dtype_dict = build_dtype_dictionary(self.datasets)
+        self.index_dict = self._create_index_dict(self.datasets, self.all_columns, self.columns, self.dtype_dict)
 
 
-    def _create_index_dict(self, datasets, all_columns, requested_columns):
+    def _create_index_dict(self, datasets, all_columns, requested_columns, dtype_dict):
         index_dict = {}
         for path in datasets:
             ac = all_columns[path]
-            all_str_columns = get_bad_columns(ac, DATE_FIELDS_PATH, BAD_COLS_PATH)
+            # all_str_columns = get_bad_columns(ac, DATE_FIELDS_PATH, BAD_COLS_PATH)
+            all_str_columns = []
+            for col, dtype in dtype_dict.items():
+                if dtype == object or dtype == pandas.StringDtype():
+                    if col not in DATE_COLUMNS and col in ac:
+                        all_str_columns.append(col)
+
             date_indices, date_found = find_indices(ac, DATE_COLUMNS)
             # good float columns from path
             if requested_columns is None:
@@ -166,7 +184,7 @@ class Converter:
             array = group.zeros('dataset', mode='w', shape=(self.rows_count, float_len), chunks=(self.batch_size, float_len), dtype='f4')
             col_array = group.create('columns', shape=(float_len, ), dtype='U16')
             dates_array = group.create('dates', mode='w', shape=(self.rows_count, len(DATE_COLUMNS)), dtype='M8[D]')
-            str_array = group.create('str_dataset', mode='w', shape=(self.rows_count, str_len), dtype='U16')
+            str_array = group.create('str_dataset', mode='w', shape=(self.rows_count, str_len), dtype='U16', chunks=(self.batch_size, str_len))
             str_col_array = group.create('str_columns', mode='w', shape=(str_len, ), dtype='U16')
             
             str_left, float_left = 0, 0

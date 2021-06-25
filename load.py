@@ -11,7 +11,6 @@ class UKBDataLoader():
         self.dataset = zarr.open_group(os.path.join(data_dir, split), mode='r')
         self.train, self.val, self.test = self.dataset['train'], self.dataset['val'], self.dataset['test']
         self.columns = self.train.columns[:]
-        self.column_indices = self.train.column_indices[:]
 
         if '-' in phenotype_id:
             raise ValueError(f'- should not be in {phenotype_id}, we need only a field id without any assessments and array numbers')
@@ -84,17 +83,17 @@ class UKBDataLoader():
 
 
 class BinaryICDLoader():
-    def __init__(self, data_dir: str, split: str, phenotype_col: str, features: List[str], code: str) -> None:
+    def __init__(self, data_dir: str, split: str, phenotype_col: str, features: List[str], icd10_code: str) -> None:
         
         self.dataset = zarr.open_group(os.path.join(data_dir, split), mode='r')
         self.train, self.val, self.test = self.dataset['train'], self.dataset['val'], self.dataset['test']
         self.columns = self.train.columns[:]
-        self.column_indices = self.train.column_indices[:]
+        self.str_columns = self.train.str_columns[:]
 
         if '-' in phenotype_col:
             raise ValueError(f'- should not be in {phenotype_col}, we need only a field id without any assessments and array numbers')
         self.phenotype_col = phenotype_col
-        self.code = int(code)
+        self.icd10_code = icd10_code
 
         for f in features:
             if '-' in f:
@@ -113,19 +112,19 @@ class BinaryICDLoader():
 
     def _find_arrayed_target_columns(self, column):
         to_find = column + '-'
-        found = [[] for i in range(3)] # 3 is a number of assessments
-        for i, col in enumerate(self.columns):
+        found = [[]]
+        for i, col in enumerate(self.str_columns):
             if col[:len(to_find)] == to_find:
-                assessment = int(col[len(to_find)])
+                assessment = int(col[len(to_find)]) # should always be 0
                 found[assessment].append(i)
         
         return found
 
-    def _process_chunk(self, chunk, target_cols, feature_cols):
+    def _process_chunk(self, str_chunk, chunk, target_cols, feature_cols):
         codes = []
         for i, assessment_cols in enumerate(target_cols):
-            targets = chunk[:, assessment_cols]
-            code_in = (targets == self.code).sum(axis=1) > 0
+            targets = str_chunk[:, assessment_cols]
+            code_in = (targets == self.icd10_code).sum(axis=1) > 0
             codes.append(code_in.reshape(-1, 1))
 
         codes = numpy.hstack(codes)
@@ -143,16 +142,17 @@ class BinaryICDLoader():
         features = numpy.hstack(features)
         return true_target, features
 
-    def _load_binary_icd_sd_target(self, dataset):
+    def _load_binary_icd_target(self, dataset):
         target_cols = self._find_arrayed_target_columns(self.phenotype_col)
         feature_cols = [self._find_assessment_columns(feature) for feature in self.features]
         data = dataset['dataset']
-        
+        str_data = dataset['str_dataset']
         targets, all_features = [], []
         for start in range(0, data.shape[0], data.chunks[0]):
 
             chunk = data[start:start + data.chunks[0]]
-            target, features = self._process_chunk(chunk, target_cols, feature_cols)
+            str_chunk = str_data[start: start + data.chunks[0]]
+            target, features = self._process_chunk(str_chunk, chunk, target_cols, feature_cols)
             targets.append(target)
             all_features.append(features)
 
@@ -161,7 +161,7 @@ class BinaryICDLoader():
         return targets, all_features
 
     def _load(self, dataset):
-        targets, features = self._load_binary_icd_sd_target(dataset)
+        targets, features = self._load_binary_icd_target(dataset)
         data = numpy.concatenate([features, targets], axis=1)
         frame = pandas.DataFrame(data=data, columns=self.features + [self.phenotype_col])
         return frame

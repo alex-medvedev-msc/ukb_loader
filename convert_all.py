@@ -7,6 +7,7 @@ import time
 if __name__ == '__main__':
 
     dataset_path = '/media/data1/ag3r/ukb/dataset/ukb27349.csv'
+    
     zarr_path = '/media/data1/ag3r/ukb/dataset/all/zarr'
     converter = Converter(dataset_path, zarr_path, rows_count=None, columns=None, batch_size=5000)
 

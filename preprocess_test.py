@@ -1,7 +1,7 @@
 import numpy
-from preprocess import Converter, get_bad_date_columns, get_all_columns
+from preprocess import Converter, get_bad_date_columns, get_all_columns, build_dtype_dictionary
 import zarr
-import os
+import pandas
 
 
 DATASET_PATH = '/media/data1/ag3r/ukb/dataset/ukb27349.csv'
@@ -19,6 +19,15 @@ ICD10_PATH = '/media/data1/ag3r/ukb/dataset/ukb44577.csv'
     '21001-0.0': 'body_mass_index',
     '21002-0.0': 'weight',
 """
+
+
+def test_build_dtype_dictionary():
+    dtype_dict = build_dtype_dictionary([DATASET_PATH, BIOMARKERS_PATH, ICD10_PATH])
+    assert dtype_dict['31-0.0'] == pandas.Int64Dtype()
+    assert dtype_dict['50-0.0'] == pandas.Float64Dtype()
+    assert dtype_dict['53-0.0'] == pandas.StringDtype()
+    assert dtype_dict['41270-0.0'] == pandas.StringDtype()
+
 
 def test_converter():
     columns = ['31-0.0', '50-0.0', '50-1.0', '50-2.0','21002-0.0', '21002-1.0', '21002-2.0']
@@ -38,7 +47,7 @@ def test_converter():
 
 
 def test_convert_str_columns():
-    columns = ['31-0.0', '50-0.0', '50-1.0', '50-2.0', '41270-0.0', '41270-1.0', '41270-2.0']
+    columns = ['31-0.0', '50-0.0', '50-1.0', '50-2.0', '41270-0.0', '41270-0.1', '41270-0.2']
     
     zarr_path = '/media/data1/ag3r/ukb/test/zarr'
     paths = [DATASET_PATH, ICD10_PATH]
@@ -56,19 +65,19 @@ def test_convert_str_columns():
 
     assert array['str_dataset'].shape == (20, 3)
     assert array['str_columns'].shape == (3, )
-    assert list(array['str_columns'][:]) == ['41270-0.0', '41270-1.0', '41270-2.0']
+    assert list(array['str_columns'][:]) == ['41270-0.0', '41270-0.1', '41270-0.2']
 
 
 def test_convert_all_columns():
     columns = None
     
     zarr_path = '/media/data1/ag3r/ukb/test/zarr'
-    converter = Converter(DATASET_PATH, zarr_path, rows_count=1000, columns=columns, batch_size=500)
+    converter = Converter([DATASET_PATH], zarr_path, rows_count=1000, columns=columns, batch_size=500)
 
     converter.convert()
     
     array = zarr.open_group(zarr_path, mode='r')
-    assert array['dataset'].shape == (1000, 11175)
+    assert array['dataset'].shape == (1000, 11298)
     assert array['eid'].shape == (1000, 1)
     assert array['eid'][0] == 1000011
     # assert list(array['columns'][:]) == ['eid', '31-0.0', '21002-0.0', '21002-1.0']

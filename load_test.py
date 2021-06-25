@@ -6,6 +6,7 @@ from sklearn.linear_model import LinearRegression
 
 
 DATASET_PATH = '/media/data1/ag3r/ukb/dataset/ukb27349.csv'
+ICD10_PATH = '/media/data1/ag3r/ukb/dataset/ukb44577.csv'
 
 
 def test_load_real_target():
@@ -13,7 +14,7 @@ def test_load_real_target():
     columns = ['31-0.0', '50-0.0', '50-1.0', '50-2.0', '21002-0.0', '21002-1.0', '21002-2.0']
     
     zarr_path = '/media/data1/ag3r/ukb/test/small_20'
-    converter = Converter(DATASET_PATH, zarr_path, rows_count=20, columns=columns, batch_size=10)
+    converter = Converter([DATASET_PATH], zarr_path, rows_count=20, columns=columns, batch_size=10)
 
     converter.convert()
 
@@ -115,7 +116,7 @@ def test_real_target_regression(benchmark):
     zarr_path = '/media/data1/ag3r/ukb/test/avg_10k'
     rows_count = 10*1000
     batch_size = 1000
-    converter = Converter(DATASET_PATH, zarr_path, rows_count=rows_count, columns=columns, batch_size=batch_size)
+    converter = Converter([DATASET_PATH], zarr_path, rows_count=rows_count, columns=columns, batch_size=batch_size)
 
     converter.convert()
 
@@ -158,7 +159,7 @@ def test_binary_target():
     
     columns = columns + sd_columns
     zarr_path = '/media/data1/ag3r/ukb/test/small_1000'
-    converter = Converter(DATASET_PATH, zarr_path, rows_count=1000, columns=columns, batch_size=500)
+    converter = Converter([DATASET_PATH], zarr_path, rows_count=1000, columns=columns, batch_size=500)
 
     converter.convert()
 
@@ -191,14 +192,13 @@ def test_binary_icd10_target():
     columns = ['31-0.0', '50-0.0', '50-1.0', '50-2.0', '21002-0.0', '21002-1.0', '21002-2.0']
 
     sd_columns = []
-    for assessment in range(3):
-        for arr_idx in range(223): # value from https://biobank.ctsu.ox.ac.uk/crystal/field.cgi?id=41270, array instances
-            sd_columns.append(f'41270-{assessment}.{arr_idx}')
-        
+    
+    for arr_idx in range(223): # value from https://biobank.ctsu.ox.ac.uk/crystal/field.cgi?id=41270, array instances
+        sd_columns.append(f'41270-0.{arr_idx}')
     
     columns = columns + sd_columns
     zarr_path = '/media/data1/ag3r/ukb/test/small_1000'
-    converter = Converter(DATASET_PATH, zarr_path, rows_count=1000, columns=columns, batch_size=500)
+    converter = Converter([DATASET_PATH, ICD10_PATH], zarr_path, rows_count=1000, columns=columns, batch_size=500)
 
     converter.convert()
 
@@ -208,8 +208,8 @@ def test_binary_icd10_target():
     assert len(train) == 800
     assert len(val) == 100
     assert len(test) == 100
-
-    loader = BinaryICDLoader('/media/data1/ag3r/ukb/test/splits/', 'random', '20002', ['31', '50', '21002'], '1226') # 1226 - hypothyroidism
+    icd10_code = 'E119' # E11.9 - non-insulin dependent diabetes mellitus without complications
+    loader = BinaryICDLoader('/media/data1/ag3r/ukb/test/splits/', 'random', '41270', ['31', '50', '21002'], 'E119') 
     train = loader.load_train()
     assert train.shape == (800, 4)
     
