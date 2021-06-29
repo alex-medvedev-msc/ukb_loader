@@ -6,10 +6,12 @@ import time
 
 if __name__ == '__main__':
 
-    dataset_path = '/media/data1/ag3r/ukb/dataset/ukb27349.csv'
+    DATASET_PATH = '/media/data1/ag3r/ukb/dataset/ukb27349.csv'
+    BIOMARKERS_PATH = '/media/data1/ag3r/ukb/dataset/ukb42491.csv'
+    ICD10_PATH = '/media/data1/ag3r/ukb/dataset/ukb44577.csv'
     
     zarr_path = '/media/data1/ag3r/ukb/dataset/all/zarr'
-    converter = Converter(dataset_path, zarr_path, rows_count=None, columns=None, batch_size=5000)
+    converter = Converter([DATASET_PATH, BIOMARKERS_PATH, ICD10_PATH], zarr_path, rows_count=None, columns=None, batch_size=5000, verbose=True)
 
     start = time.time()
     converter.convert()

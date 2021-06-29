@@ -76,12 +76,13 @@ class IndexData:
 
 
 class Converter:
-    def __init__(self, datasets: List[str], zarr_path: str, rows_count: int = None, batch_size: int = 1024, columns: List[str] = None) -> None:
+    def __init__(self, datasets: List[str], zarr_path: str, rows_count: int = None, batch_size: int = 1024, columns: List[str] = None, verbose: bool = False) -> None:
         self.datasets = datasets
         self.zarr_path = zarr_path
         self.rows_count = rows_count
         self.columns = columns
         self.batch_size = batch_size
+        self.verbose = verbose
         if not isinstance(datasets, List) or len(datasets) == 0:
             raise ValueError(f'Datasets should be a list of full paths to them, not {datasets}')
         if columns is not None and 'eid' in columns:
@@ -155,6 +156,8 @@ class Converter:
                 right = left + len(indices)
                 dataset[start: end, left:right] = fc.apply(pandas.to_numeric, errors='coerce').values
                 col_array[left:right] = cols
+                if self.verbose:
+                    print(f'converted float batch number {j} with {len(cols)} columns')
 
     def _read_str(self, source_path, indices, str_dataset, left, col_array, cols):
         for j, fc in enumerate(
@@ -169,6 +172,8 @@ class Converter:
                 right = left + len(indices)
                 str_dataset[start: end, left:right] = fc.astype(str).values
                 col_array[left:right] = cols
+                if self.verbose:
+                    print(f'converted str batch number {j} with {len(cols)} columns')
 
     def _calculate_str_float_array_len(self):
         return sum([len(indices.str_col) for indices in self.index_dict.values()]),\
@@ -189,6 +194,9 @@ class Converter:
             
             str_left, float_left = 0, 0
             for path, indices in self.index_dict.items():
+                if self.verbose:
+                    print()
+                    print(f'Starting to convert dataset {path}')
                 if len(indices.date) > 0:
                     self._read_dates_eid(path, indices.date, dates_array, eid_array)
                 if len(indices.str_col) > 0:
