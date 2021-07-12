@@ -1,5 +1,5 @@
-from split import RandomSplitter
-from preprocess import Converter
+from .split import RandomSplitter
+from .preprocess import Converter
 import zarr
 
 

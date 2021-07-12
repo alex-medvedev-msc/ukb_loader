@@ -1,23 +1,29 @@
 import enum
 from typing import List, Tuple
-from numpy import dtype, iinfo
+from numpy import dstack, dtype, iinfo
+import numpy
 from pandas.core.frame import DataFrame
 import zarr
 import pandas
+import pkg_resources
 
 
 DATE_COLUMNS = ['53-0.0', '53-1.0', '53-2.0']
-DATE_FIELDS_PATH = '/media/data1/ag3r/ukb/dataset/date_fields.csv'
-BAD_COLS_PATH = '/media/data1/ag3r/ukb/dataset/bad_cols_back.csv'
 
 
-def build_dtype_dictionary(sources: List[str]):
+def load_dtype_dictionary():
+    path = pkg_resources.resource_filename('ukb_loader', 'all_dtypes.csv')
+    dtype_frame = pandas.read_csv(path)
+
     dtype_dict = {}
-    for source in sources:
-        data = pandas.read_csv(source, nrows=2000, low_memory=False)
-        converted = data.convert_dtypes(infer_objects=True, convert_string=True, convert_integer=True)
-        for column, dtype in converted.dtypes.iteritems():
-            dtype_dict[column] = dtype
+    convert_dict = {
+        'string': pandas.StringDtype(),
+        'Int64': pandas.Int64Dtype(),
+        'Float64': pandas.Float64Dtype()
+    }
+    for col, d in zip(dtype_frame.column, dtype_frame.inferred_dtype):
+        dtype_dict[col] = convert_dict[d]
+
     return dtype_dict
 
 
@@ -27,20 +33,6 @@ def get_all_columns(dataset_path: str) -> List[str]:
 
     return all_columns
 
-def get_bad_columns(columns, date_fields_path: str = 'date_fields.csv', bad_cols_path: str = 'bad_cols.csv') -> List[str]:
-    dc = set(pandas.read_csv(date_fields_path).field_id)
-    bad = []
-    for c in columns[1:]: # without eid
-        if int(c.split('-')[0]) in dc:
-            bad.append(c)
-
-    bc = pandas.read_csv(bad_cols_path).field_id
-    bc = set([int(c.split('-')[0]) for c in bc])
-    for c in columns[1:]:
-        if int(c.split('-')[0]) in bc:
-            bad.append(c)
-
-    return bad
 
 def get_bad_date_columns(columns, date_fields_path: str = 'date_fields.csv') -> List[str]:
     dc = set(pandas.read_csv(date_fields_path).field_id)
@@ -82,6 +74,7 @@ class Converter:
         self.rows_count = rows_count
         self.columns = columns
         self.batch_size = batch_size
+        self.str_batch_size = batch_size // 8
         self.verbose = verbose
         if not isinstance(datasets, List) or len(datasets) == 0:
             raise ValueError(f'Datasets should be a list of full paths to them, not {datasets}')
@@ -95,33 +88,45 @@ class Converter:
         self.all_columns = {path: get_all_columns(path) for path in self.datasets}
         self.eid_index = 0
         
-        if self.rows_count is None:
-            self.rows_count = 502536
-
-        self.dtype_dict = build_dtype_dictionary(self.datasets)
+        self.dtype_dict = load_dtype_dictionary()
         self.index_dict = self._create_index_dict(self.datasets, self.all_columns, self.columns, self.dtype_dict)
+        self.common_eids, self.masks_indices = self._create_eid_data(datasets)
 
+        if self.rows_count is None:
+            self.rows_count = len(self.common_eids)
+
+
+    def _get_ac_str_columns(self, requested_columns, columns, all_str_columns, index_dict):
+        old_ac_set = set()
+        old_str_set = set()
+        for index_data in index_dict.values():
+            old_ac_set |= set(index_data.float_found)
+            old_str_set |= set(index_data.str_found)
+        
+        if requested_columns is None:
+            ac_columns = [d for d in columns if d not in DATE_COLUMNS and d not in all_str_columns and d not in old_ac_set]
+            str_columns = [d for d in columns if d in all_str_columns and d not in old_str_set]
+        else:
+            ac_columns = [d for d in columns if d not in DATE_COLUMNS and d in requested_columns and d not in all_str_columns and d not in old_ac_set]
+            str_columns = [d for d in columns if d in requested_columns and d in all_str_columns and d not in old_str_set]
+
+        return ac_columns, str_columns
 
     def _create_index_dict(self, datasets, all_columns, requested_columns, dtype_dict):
         index_dict = {}
         for path in datasets:
             ac = all_columns[path]
             # all_str_columns = get_bad_columns(ac, DATE_FIELDS_PATH, BAD_COLS_PATH)
-            all_str_columns = []
+            all_str_columns = set()
             for col, dtype in dtype_dict.items():
                 if dtype == object or dtype == pandas.StringDtype():
                     if col not in DATE_COLUMNS and col in ac:
-                        all_str_columns.append(col)
+                        all_str_columns.add(col)
 
             date_indices, date_found = find_indices(ac, DATE_COLUMNS)
             # good float columns from path
-            if requested_columns is None:
-                ac_columns = [d for d in ac if d not in DATE_COLUMNS and d not in all_str_columns]
-                str_columns = [d for d in ac if d in all_str_columns]
-            else:
-                ac_columns = [d for d in ac if d not in DATE_COLUMNS and d in requested_columns and d not in all_str_columns]
-                str_columns = [d for d in ac if d in requested_columns and d in all_str_columns]
-            
+            ac_columns, str_columns = self._get_ac_str_columns(requested_columns, ac, all_str_columns, index_dict)
+
             float_col, found_float_col = find_indices(ac, ac_columns)
             str_col, found_str_col = find_indices(ac, str_columns)
 
@@ -131,7 +136,39 @@ class Converter:
         return index_dict
 
     
-    def _read_dates_eid(self, source_path, date_indices, dates, eid_array):
+    def _create_eid_data(self, datasets):
+        eid_dict = {}
+        common_eids = None
+        for path in datasets:
+            if self.verbose:
+                print(f'starting reading eid data from {path}')
+            eid = pandas.read_csv(path, usecols=[0], nrows=self.rows_count).iloc[:, 0].values
+            if common_eids is None:
+                common_eids = set(eid)
+            else:
+                common_eids |= set(eid)
+            eid_dict[path] = eid
+            if self.verbose:
+                print(f'ended reading eid data from {path}')
+
+        masks_indices = {}
+        ce_list = sorted(list(common_eids))
+        for path, eid in eid_dict.items():
+            eid_set = set(eid)
+            mask = numpy.array([True if e in eid_set else False for e in ce_list])
+            mask_indices = numpy.arange(len(ce_list))[mask]
+            masks_indices[path] = mask_indices
+            if self.verbose:
+                print(f'mask analysis for {path}')
+                print(f'min: {min(mask_indices)}, max: {max(mask_indices)}, sum: {mask.sum()}')
+            
+
+        if self.verbose:
+            print(f'created masks_indices and eid_dict')
+        return ce_list, masks_indices
+
+    
+    def _read_dates_eid(self, source_path: str, date_indices, dates: zarr.Array, eid_array: zarr.Array, eid_mask_indices):
         for i, chunk in enumerate(
                         pandas.read_csv(
                             source_path,
@@ -141,36 +178,44 @@ class Converter:
                             parse_dates=list(range(1, len(date_indices) + 1)))
                     ):
                 start, end = i*self.batch_size, i*self.batch_size + chunk.shape[0]
-                dates[start: end, :] = chunk.iloc[:, 1:].values
-                eid_array[start: end] = chunk.iloc[:, 0].values.reshape(-1, 1)
+                chunk_indices = eid_mask_indices[start: end]
+                dates.set_orthogonal_selection((chunk_indices, slice(None)), chunk.iloc[:, 1:].values)
+                eid_chunk = chunk.iloc[:, 0].values.reshape(-1, 1)
+                eid_array.set_orthogonal_selection((chunk_indices, slice(None)),  eid_chunk)
 
-    def _read_float(self, source_path, indices, dataset, left, col_array, cols):
+    def _read_float(self, source_path: str, indices, dataset: zarr.Array, left, col_array, cols, eid_mask_indices):
         for j, fc in enumerate(
                         pandas.read_csv(
                             source_path,
                             usecols=indices,
                             chunksize=self.batch_size,
-                            nrows=self.rows_count)
+                            nrows=self.rows_count,
+                            low_memory=False)
                     ):
                 start, end = j*self.batch_size, j*self.batch_size + fc.shape[0]
                 right = left + len(indices)
-                dataset[start: end, left:right] = fc.apply(pandas.to_numeric, errors='coerce').values
+                chunk_indices = eid_mask_indices[start: end]
+                dataset.set_orthogonal_selection((chunk_indices, slice(left, right)), fc.apply(pandas.to_numeric, errors='coerce').values)
+                # dataset[chunk_indices, left:right] = fc.apply(pandas.to_numeric, errors='coerce').values
                 col_array[left:right] = cols
                 if self.verbose:
                     print(f'converted float batch number {j} with {len(cols)} columns')
 
-    def _read_str(self, source_path, indices, str_dataset, left, col_array, cols):
+    def _read_str(self, source_path: str, indices, str_dataset: zarr.Array, left, col_array, cols, eid_mask_indices):
         for j, fc in enumerate(
                         pandas.read_csv(
                             source_path,
                             usecols=indices,
-                            chunksize=self.batch_size,
-                            nrows=self.rows_count)
+                            chunksize=self.str_batch_size,
+                            nrows=self.rows_count,
+                            low_memory=False)
                     ):
-                start, end = j*self.batch_size, j*self.batch_size + fc.shape[0]
+                start, end = j*self.str_batch_size, j*self.str_batch_size + fc.shape[0]
                 fc.fillna('', inplace=True)
                 right = left + len(indices)
-                str_dataset[start: end, left:right] = fc.astype(str).values
+                chunk_indices = eid_mask_indices[start: end]
+                str_dataset.set_orthogonal_selection((chunk_indices, slice(left, right)), fc.astype(str).values)
+                # str_dataset[chunk_indices, left:right] = fc.astype(str).values
                 col_array[left:right] = cols
                 if self.verbose:
                     print(f'converted str batch number {j} with {len(cols)} columns')
@@ -197,13 +242,14 @@ class Converter:
                 if self.verbose:
                     print()
                     print(f'Starting to convert dataset {path}')
+                eid_mask_indices = self.masks_indices[path]
                 if len(indices.date) > 0:
-                    self._read_dates_eid(path, indices.date, dates_array, eid_array)
+                    self._read_dates_eid(path, indices.date, dates_array, eid_array, eid_mask_indices)
                 if len(indices.str_col) > 0:
-                    self._read_str(path, indices.str_col, str_array, str_left, str_col_array, indices.str_found)
+                    self._read_str(path, indices.str_col, str_array, str_left, str_col_array, indices.str_found, eid_mask_indices)
                     str_left += len(indices.str_col)
                 if len(indices.float_col) > 0:
-                    self._read_float(path, indices.float_col, array, float_left, col_array, indices.float_found)
+                    self._read_float(path, indices.float_col, array, float_left, col_array, indices.float_found, eid_mask_indices)
                     float_left += len(indices.float_col)
 
 
