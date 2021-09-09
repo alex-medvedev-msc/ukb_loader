@@ -1,8 +1,9 @@
-from .split import RandomSplitter
+from .split import RandomSplitter, FixedSplitter
 from .preprocess import Converter
 from .load import UKBDataLoader, BinaryICDLoader, BinarySDLoader
 import numpy
 from sklearn.linear_model import LinearRegression
+import zarr
 
 
 DATASET_PATH = '/media/data1/ag3r/ukb/dataset/ukb27349.csv'
@@ -293,7 +294,7 @@ def test_binary_sd_target():
     assert len(un) == 2
     assert (un == numpy.array([0.0, 1.0])).all()
     assert 100 > c[1] > 10
-    
+
 
 def test_binary_sd_target_prevalence():
     columns = ['31-0.0', '50-0.0', '50-1.0', '50-2.0', '21002-0.0', '21002-1.0', '21002-2.0']
@@ -333,4 +334,3 @@ def test_binary_sd_target_prevalence():
 
     prevalence = (train.iloc[:, -1].sum() + val.iloc[:, -1].sum() + test.iloc[:, -1].sum())
     assert 59312 <= prevalence <= 59314
-    

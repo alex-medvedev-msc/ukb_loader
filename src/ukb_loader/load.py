@@ -71,7 +71,7 @@ class UKBDataLoader():
 
         data = numpy.concatenate([features, targets], axis=1)
         eid = dataset['eid'][:][mask]
-        frame = pandas.DataFrame(data=data, columns=self.features + [self.phenotype_id], index=eid.squeeze(1))
+        frame = pandas.DataFrame(data=data, columns=self.features + [self.phenotype_id], index=eid.squeeze(1) if len(eid.shape) == 2 else eid)
         return frame
 
     def load_train(self) -> pandas.DataFrame:
@@ -186,11 +186,12 @@ class BinaryICDLoader():
 
 
 class BinarySDLoader():
-    def __init__(self, data_dir: str, split: str, phenotype_col: str, features: List[str], sd_code: int) -> None:
+    def __init__(self, data_dir: str, split: str, phenotype_col: str, features: List[str], sd_code: int, na_as_false: False) -> None:
         
         self.dataset = zarr.open_group(os.path.join(data_dir, split), mode='r')
         self.train, self.val, self.test = self.dataset['train'], self.dataset['val'], self.dataset['test']
         self.columns = self.train.columns[:]
+        self.na_as_false = na_as_false
 
         if '-' in phenotype_col:
             raise ValueError(f'- should not be in {phenotype_col}, we need only a field id without any assessments and array numbers')
@@ -236,6 +237,7 @@ class BinarySDLoader():
 
         codes = numpy.hstack(codes)
         codes_na = numpy.hstack(codes_na)
+
         codes_na = (codes_na.sum(axis=1) == codes_na.shape[1])
         assessment_indices = numpy.argmax(codes, axis=1)
         true_target = (codes.sum(axis=1) > 0).astype(int).reshape(-1, 1)
@@ -249,7 +251,11 @@ class BinarySDLoader():
                 features.append(f[numpy.arange(f.shape[0]), assessment_indices].reshape(-1, 1))
         
         features = numpy.hstack(features)
-        return true_target[~codes_na], features[~codes_na], codes_na
+        if self.na_as_false:
+            true_target[codes_na] = 0
+            return true_target, features, codes_na
+        else:
+            return true_target[~codes_na], features[~codes_na], codes_na
 
     def _load_binary_sd_target(self, dataset):
         target_cols = self._find_arrayed_target_columns(self.phenotype_col)
@@ -271,9 +277,12 @@ class BinarySDLoader():
 
     def _load(self, dataset):
         targets, features, mask = self._load_binary_sd_target(dataset)
-        eid = dataset['eid'][:][~mask]
+        if self.na_as_false:
+            eid = dataset['eid'][:]
+        else:
+            eid = dataset['eid'][:][~mask]
         data = numpy.concatenate([features, targets], axis=1)
-        frame = pandas.DataFrame(data=data, columns=self.features + [self.phenotype_col], index=eid.squeeze(1))
+        frame = pandas.DataFrame(data=data, columns=self.features + [self.phenotype_col], index=eid.squeeze(1) if len(eid.shape) == 2 else eid)
         return frame
 
     def load_train(self) -> pandas.DataFrame:

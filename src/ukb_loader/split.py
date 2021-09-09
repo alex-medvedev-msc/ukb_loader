@@ -74,3 +74,55 @@ class RandomSplitter(Splitter):
 
         return list(samples[x_train]), list(samples[x_val]), list(samples[x_test])
 
+
+
+class FixedSplitter(Splitter):
+    def __init__(self, zarr_ds_path: str, split_path: str, train_samples: List[str], val_samples: List[str], test_samples: List[str]) -> None:
+        super().__init__()
+        self.zarr_ds_path = zarr_ds_path
+        self.split_path = split_path
+        # proportions are [train_ratio, val_ratio, test_ratio]
+
+        self.train_samples = train_samples
+        self.val_samples = val_samples
+        self.test_samples = test_samples
+        
+
+    def split(self) -> Tuple[List[str], List[str], List[str]]:
+        source = zarr.open_group(self.zarr_ds_path, mode='r')
+        target = zarr.open_group(self.split_path, mode='w')
+        samples = source['eid'][:].flatten()
+
+        train, val, test = target.create_groups('train', 'val', 'test')
+        dataset = source['dataset']
+        str_dataset = source['str_dataset']
+        train_set, val_set, test_set = set(self.train_samples), set(self.val_samples), set(self.test_samples)
+        x_train = [s in train_set for s in samples]
+        x_val = [s in val_set for s in samples]
+        x_test = [s in test_set for s in samples]
+
+        for group, x in zip([train, val, test], [x_train, x_val, x_test]):
+            group.array('eid', samples[x])
+            group.array('columns', source['columns'][:])
+            group.array('str_columns', source['str_columns'][:])
+            group.array('dates', source['dates'][:][x])
+
+            new_dataset = group.zeros('dataset', shape=(0, dataset.shape[1]), chunks=dataset.chunks)
+
+            if str_dataset.shape[1] > 0:
+                new_str_dataset = group.create('str_dataset', mode='w', shape=(0, str_dataset.shape[1]), dtype='U16', chunks=str_dataset.chunks)
+            else:
+                new_str_dataset = group.create('str_dataset', mode='w', shape=(len(x), str_dataset.shape[1]), dtype='U16', chunks=str_dataset.chunks)
+
+            chunk_size = dataset.chunks[0]
+            for chunk_start in range(0, len(x), chunk_size):
+                rows = min(dataset.shape[0] - chunk_start, chunk_size) 
+                nindex = numpy.arange(dataset.shape[0])[x][chunk_start: chunk_start + rows]
+                chunk = dataset.get_orthogonal_selection((nindex, slice(None)))
+                new_dataset.append(chunk, axis=0)
+                
+                if str_dataset.shape[1] > 0:
+                    str_chunk = str_dataset.get_orthogonal_selection((nindex, slice(None)))
+                    new_str_dataset.append(str_chunk, axis=0)
+
+        return self.train_samples, self.val_samples, self.test_samples
