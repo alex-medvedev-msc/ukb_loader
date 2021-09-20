@@ -172,7 +172,7 @@ class BinaryICDLoader():
         targets, features, mask = self._load_binary_icd_target(dataset)
         eid = dataset['eid'][:][~mask]
         data = numpy.concatenate([features, targets], axis=1)
-        frame = pandas.DataFrame(data=data, columns=self.features + [self.phenotype_col], index=eid.squeeze(1))
+        frame = pandas.DataFrame(data=data, columns=self.features + [self.phenotype_col], index=eid.squeeze(1) if len(eid.shape) == 2 else eid)
         return frame
 
     def load_train(self) -> pandas.DataFrame:

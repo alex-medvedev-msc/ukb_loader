@@ -5,8 +5,8 @@ from .preprocess import Converter
 import zarr
 
 
-DATASET_PATH = os.path.get('UKB_DATASET_PATH', '/media/data1/ag3r/ukb/dataset/ukb27349.csv')
-ICD10_PATH = os.path.get('UKB_ICD10_PATH', '/media/data1/ag3r/ukb/dataset/ukb44577.csv')
+DATASET_PATH = os.environ.get('UKB_DATASET_PATH', '/media/data1/ag3r/ukb/dataset/ukb27349.csv')
+ICD10_PATH = os.environ.get('UKB_ICD10_PATH', '/media/data1/ag3r/ukb/dataset/ukb44577.csv')
 
 
 def test_random_split():
