@@ -2,3 +2,6 @@ __pycache__
 .benchmarks
 .pytest_cache
 .vscode
+src/ukb_loader.egg-info
+dist
+icd10_dtypes.csv
