@@ -1,24 +1,13 @@
+import os
 import numpy
+import tempfile
 from .preprocess import Converter, get_bad_date_columns, get_all_columns, load_dtype_dictionary
 import zarr
 import pandas
 
 
-DATASET_PATH = '/media/data1/ag3r/ukb/dataset/ukb27349.csv'
-BIOMARKERS_PATH = '/media/data1/ag3r/ukb/dataset/ukb42491.csv'
-ICD10_PATH = '/media/data1/ag3r/ukb/dataset/ukb44577.csv'
-
-"""
-'eid': 'eid',
-    '31-0.0': 'sex',
-    '50-0.0': 'height',
-    '53-0.0': 'date_assessment',
-    '53-1.0': 'date_assessment1',
-    '53-2.0': 'date_assessment2',
-    '21000-0.0': 'ethnicity',
-    '21001-0.0': 'body_mass_index',
-    '21002-0.0': 'weight',
-"""
+DATASET_PATH = os.environ.get('UKB_DATASET_PATH', '/media/data1/ag3r/ukb/dataset/ukb27349.csv')
+ICD10_PATH = os.environ.get('UKB_ICD10_PATH', '/media/data1/ag3r/ukb/dataset/ukb44577.csv')
 
 
 def test_load_dtype_dictionary():
@@ -33,12 +22,12 @@ def test_load_dtype_dictionary():
 def test_converter():
     columns = ['31-0.0', '50-0.0', '50-1.0', '50-2.0','21002-0.0', '21002-1.0', '21002-2.0']
     
-    zarr_path = '/media/data1/ag3r/ukb/test/zarr'
-    converter = Converter([DATASET_PATH], zarr_path, rows_count=20, columns=columns, batch_size=10)
+    zarr_path = tempfile.TemporaryDirectory()
+    converter = Converter([DATASET_PATH], zarr_path.name, rows_count=20, columns=columns, batch_size=10)
 
     converter.convert()
     
-    array = zarr.open_group(zarr_path, mode='r')
+    array = zarr.open_group(zarr_path.name, mode='r')
     assert array['dataset'].shape == (20, 7)
     assert array['columns'].shape == (7, )
     assert array['eid'].shape == (20, 1)
@@ -50,13 +39,13 @@ def test_converter():
 def test_convert_str_columns():
     columns = ['31-0.0', '50-0.0', '50-1.0', '50-2.0', '41270-0.0', '41270-0.1', '41270-0.2']
     
-    zarr_path = '/media/data1/ag3r/ukb/test/zarr'
+    zarr_path = tempfile.TemporaryDirectory()
     paths = [DATASET_PATH, ICD10_PATH]
-    converter = Converter(paths, zarr_path, rows_count=20, columns=columns, batch_size=10)
+    converter = Converter(paths, zarr_path.name, rows_count=20, columns=columns, batch_size=10)
 
     converter.convert()
     
-    array = zarr.open_group(zarr_path, mode='r')
+    array = zarr.open_group(zarr_path.name, mode='r')
     assert array['dataset'].shape == (20, 4)
     assert array['columns'].shape == (4, )
     assert array['eid'].shape == (20, 1)
@@ -72,12 +61,12 @@ def test_convert_str_columns():
 def test_convert_all_columns():
     columns = None
     
-    zarr_path = '/media/data1/ag3r/ukb/test/zarr'
-    converter = Converter([DATASET_PATH], zarr_path, rows_count=1000, columns=columns, batch_size=500)
+    zarr_path = tempfile.TemporaryDirectory()
+    converter = Converter([DATASET_PATH], zarr_path.name, rows_count=1000, columns=columns, batch_size=500)
 
     converter.convert()
     
-    array = zarr.open_group(zarr_path, mode='r')
+    array = zarr.open_group(zarr_path.name, mode='r')
     assert array['dataset'].shape == (1000, 11152)
     assert array['eid'].shape == (1000, 1)
     assert array['eid'][0] == 1000011
@@ -97,13 +86,13 @@ def test_convert_20002_columns():
         for arr_idx in range(34): # value from https://biobank.ctsu.ox.ac.uk/crystal/field.cgi?id=20002, array instances
             columns.append(f'20002-{ai}.{arr_idx}')
     
-    zarr_path = '/media/data1/ag3r/ukb/test/zarr'
-    converter = Converter([DATASET_PATH, ICD10_PATH], zarr_path, 
+    zarr_path = tempfile.TemporaryDirectory()
+    converter = Converter([DATASET_PATH, ICD10_PATH], zarr_path.name, 
                            rows_count=1000, columns=columns, batch_size=500)
 
     converter.convert()
     
-    array = zarr.open_group(zarr_path, mode='r')
+    array = zarr.open_group(zarr_path.name, mode='r')
     columns = array['columns'][:]
     assert array['dataset'].shape == (1000, 7+34*4)
     assert array['eid'].shape == (1000, 1)
@@ -114,13 +103,13 @@ def test_convert_20002_columns():
 def test_convert_all_datasets():
     columns = ['31-0.0', '50-0.0', '50-1.0', '50-2.0', '41270-0.0', '41270-0.1', '41270-0.2']
     
-    zarr_path = '/media/data1/ag3r/ukb/test/zarr'
+    zarr_path = tempfile.TemporaryDirectory()
     paths = [DATASET_PATH, ICD10_PATH]
-    converter = Converter(paths, zarr_path, rows_count=None, columns=columns, batch_size=10000, verbose=True)
+    converter = Converter(paths, zarr_path.name, rows_count=None, columns=columns, batch_size=10000, verbose=True)
 
     converter.convert()
     
-    array = zarr.open_group(zarr_path, mode='r')
+    array = zarr.open_group(zarr_path.name, mode='r')
     assert array['dataset'].shape == (502537, 4)
     assert array['columns'].shape == (4, )
     assert array['eid'].shape == (502537, 1)

@@ -5,8 +5,10 @@ import pandas
 import numpy
 from .load import BinaryICDLoader
 import zarr
+import pytest
 
 
+@pytest.mark.skip(reason="Requires gwas results")
 def test_load_from_bed():
     bfile_prefix = '/media/data1/ag3r/ukb/runs/all/split/train'
 
@@ -24,6 +26,7 @@ def test_load_from_bed():
     assert all(unique == numpy.array([-127, 0, 1, 2]))
 
 
+@pytest.mark.skip(reason="Requires old zarr recoding")
 def test_recode_zarr():
     # val_zarr = '/media/data1/ag3r/ukb/runs/all/split/val/zarr'
     test_zarr_path = '/media/data1/ag3r/test/recode_zarr_old'
@@ -45,6 +48,7 @@ def test_recode_zarr():
     assert (data == new_data[:, :15]).all()
 
 
+@pytest.mark.skip(reason="Requires old zarr recoding")
 def test_recoded_zarr_benchmark():
     test_zarr_path = '/media/data1/ag3r/test/recode_zarr_old'
     group = zarr.open_group(test_zarr_path, mode='w')
@@ -65,14 +69,3 @@ def test_recoded_zarr_benchmark():
     new_data = numpy.unpackbits(new_data, axis=1)
     new_data = new_data[:, ::2]*2 + new_data[:, 1::2]
     assert (data == new_data[:, :15]).all()
-    
-
-def test_load_from_bed_benchmark(benchmark):
-    icd10_code = 'E119' # E11.9 - non-insulin dependent diabetes mellitus without complications
-    loader = BinaryICDLoader('/media/data1/ag3r/ukb/dataset/all/splits/', 'random', '41270', ['31', '21003'], icd10_code) 
-    train = loader.load_train()
-    samples = list(train.index)
-
-    gwas_path = '/media/data1/ag3r/ukb/runs/gwas/diabetes_e119/plink2.PHENO1.glm.logistic.hybrid'
-
-    # benchmark(load_from_bed, )
