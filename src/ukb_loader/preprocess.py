@@ -175,6 +175,7 @@ class Converter:
                             usecols=[self.eid_index] + date_indices,
                             chunksize=self.batch_size,
                             nrows=self.rows_count,
+                            encoding='cp1252',
                             parse_dates=list(range(1, len(date_indices) + 1)))
                     ):
                 start, end = i*self.batch_size, i*self.batch_size + chunk.shape[0]
@@ -190,6 +191,7 @@ class Converter:
                             usecols=indices,
                             chunksize=self.batch_size,
                             nrows=self.rows_count,
+                            encoding='cp1252',
                             low_memory=False)
                     ):
                 start, end = j*self.batch_size, j*self.batch_size + fc.shape[0]
@@ -208,6 +210,7 @@ class Converter:
                             usecols=indices,
                             chunksize=self.str_batch_size,
                             nrows=self.rows_count,
+                            encoding='cp1252',
                             low_memory=False)
                     ):
                 start, end = j*self.str_batch_size, j*self.str_batch_size + fc.shape[0]
@@ -252,49 +255,4 @@ class Converter:
                     self._read_float(path, indices.float_col, array, float_left, col_array, indices.float_found, eid_mask_indices)
                     float_left += len(indices.float_col)
 
-
-    def convert_old(self):
-
-        with zarr.open_group(self.zarr_path, mode='w') as group:
-
-            eid_array = group.zeros('eid', mode='w', shape=(self.rows_count, 1), dtype='i4')
-            array = group.zeros('dataset', mode='w', shape=(self.rows_count, len(self.columns)), chunks=(self.batch_size, len(self.columns)), dtype='f4')
-            col_array = group.array('columns', self.columns, dtype='U16')
-            col_indices_array = group.array('column_indices', self.column_indices, dtype='i4')
-            dates = group.create('dates', mode='w', shape=(self.rows_count, len(self.date_indices)), dtype='M8[D]')
-            str_array = group.create('str_dataset', mode='w', shape=(self.rows_count, len(self.bad_column_indices)), dtype='U16')
-            str_col_array = group.array('str_columns', self.bad_columns, dtype='U16')
-            
-            for i, chunk in enumerate(
-                        pandas.read_csv(
-                            self.dataset_path,
-                            usecols=[self.eid_index] + self.date_indices,
-                            chunksize=self.batch_size,
-                            nrows=self.rows_count,
-                            parse_dates=list(range(1, len(self.date_indices) + 1)))
-                    ):
-                start, end = i*self.batch_size, i*self.batch_size + chunk.shape[0]
-                dates[start: end, :] = chunk.iloc[:, 1:].values
-                eid_array[start: end] = chunk.iloc[:, 0].values.reshape(-1, 1)
-
-            for j, fc in enumerate(
-                        pandas.read_csv(
-                            self.dataset_path,
-                            usecols=self.column_indices,
-                            chunksize=self.batch_size,
-                            nrows=self.rows_count)
-                    ):
-                start, end = j*self.batch_size, j*self.batch_size + fc.shape[0]
-                array[start: end, :] = fc.apply(pandas.to_numeric, errors='coerce').values
-
-            for j, fc in enumerate(
-                        pandas.read_csv(
-                            self.dataset_path,
-                            usecols=self.bad_column_indices,
-                            chunksize=self.batch_size,
-                            nrows=self.rows_count)
-                    ):
-                start, end = j*self.batch_size, j*self.batch_size + fc.shape[0]
-                fc.fillna('', inplace=True)
-                str_array[start: end, :] = fc.astype(str).values
     
