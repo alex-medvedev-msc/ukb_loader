@@ -6,7 +6,7 @@ import os
 
 
 class UKBDataLoader():
-    def __init__(self, data_dir: str, split: str, phenotype_id: str, features: List[str]) -> None:
+    def __init__(self, data_dir: str, split: str, phenotype_id: str, features: List[str], array_agg_func='mean') -> None:
         
         self.dataset = zarr.open_group(os.path.join(data_dir, split), mode='r')
         self.train, self.val, self.test = self.dataset['train'], self.dataset['val'], self.dataset['test']
@@ -21,18 +21,47 @@ class UKBDataLoader():
                 raise ValueError(f'Feature {f} should not contain -, we need only a field id without any assessments and array numbers')
 
         self.features = features
+        if array_agg_func not in ['mean', 'max']:
+            raise ValueError(f'array_agg_func must be one of the ["mean", "max"]')
+        self.agg_func = array_agg_func
 
     def _find_assessment_columns(self, column):
+        # 50-1.0 = {phenotype_id}-{assessment_id}.{array_id}
         to_find = column + '-'
+        assessment_number = 0
+        array_number = 0
         found = []
         for i, col in enumerate(self.columns):
             if col[:len(to_find)] == to_find:
                 found.append(i)
+                a = int(col[len(to_find)])
+                if a > assessment_number:
+                    assessment_number = a
+                
+                array_c = int(col[len(to_find) + 2:])
+                if array_c > array_number:
+                    array_number = array_c
         
-        return found
+        return found, assessment_number + 1, array_number + 1
 
-    def _process_chunk(self, chunk, target_cols, feature_cols):
-        targets = chunk[:, target_cols]
+    def _get_arrayed_target(self, chunk, target_cols, array_count):
+        total_targets = []
+        for array_index in range(array_count):
+            cols = target_cols[array_index*array_count: (array_index + 1)*array_count]
+            targets = chunk[:, cols]
+            if self.agg_func == 'max':
+                targets = numpy.nanmax(targets, axis=1)
+            else:
+                targets = numpy.nanmean(targets, axis=1)
+            total_targets.append(targets)
+
+        return numpy.column_stack(total_targets)
+
+    def _process_chunk(self, chunk, target_cols, feature_cols, assessment_count, array_count):
+        if array_count > 1:
+            targets = self._get_arrayed_target(chunk, target_cols, array_count)
+        else:
+            targets = chunk[:, target_cols]
         assessment_indices = targets.shape[1] - numpy.argmax(numpy.flip(~numpy.isnan(targets), axis=1), axis=1) - 1
         true_target = targets[numpy.arange(targets.shape[0]), assessment_indices].reshape(-1, 1)
 
@@ -48,8 +77,8 @@ class UKBDataLoader():
         return true_target, features
 
     def _load_real_value_target(self, dataset):
-        target_cols = self._find_assessment_columns(self.phenotype_id)
-        feature_cols = [self._find_assessment_columns(feature) for feature in self.features]
+        target_cols, assessment_count, array_count = self._find_assessment_columns(self.phenotype_id)
+        feature_cols = [self._find_assessment_columns(feature)[0] for feature in self.features]
 
         data = dataset['dataset']
 
@@ -57,7 +86,7 @@ class UKBDataLoader():
         for start in range(0, data.shape[0], data.chunks[0]):
 
             chunk = data[start:start + data.chunks[0]]
-            target, features = self._process_chunk(chunk, target_cols, feature_cols)
+            target, features = self._process_chunk(chunk, target_cols, feature_cols, assessment_count, array_count)
             targets.append(target)
             all_features.append(features)
 

@@ -41,6 +41,36 @@ def test_load_real_target():
     assert list(train.columns) == ['31', '21002', '50']
 
 
+def test_load_real_arrayed_target():
+
+    columns = ['31-0.0', '3062-0.0', '3062-0.1', '3062-0.2', '3062-1.0', '3062-1.1', '3062-1.2', '3062-2.0', '3062-2.1', '3062-2.2', '21002-0.0', '21002-1.0', '21002-2.0']
+    
+    zarr_path = tempfile.TemporaryDirectory().name
+    converter = Converter([DATASET_PATH], zarr_path, rows_count=20, columns=columns, batch_size=10)
+
+    converter.convert()
+
+    split_dir = tempfile.TemporaryDirectory().name
+    split_path = os.path.join(split_dir, 'random')
+    splitter = RandomSplitter(zarr_path, split_path, seed=0)
+    train, val, test = splitter.split()
+    assert len(train) == 16
+    assert len(val) == 2
+    assert len(test) == 2
+
+    loader = UKBDataLoader(split_dir, 'random', '3062', ['31', '21002'])
+    train = loader.load_train()
+    assert train.shape == (15, 3)
+    
+    val = loader.load_val()
+    assert val.shape == (2, 3)
+
+    test = loader.load_test()
+    assert test.shape == (2, 3)
+
+    assert list(train.columns) == ['31', '21002', '3062']
+
+
 def test_real_target_10k_rows(benchmark):
     columns = ['31-0.0', '50-0.0', '50-1.0', '50-2.0', '21002-0.0', '21002-1.0', '21002-2.0']
     
@@ -237,7 +267,7 @@ def test_binary_sd_target():
     assert len(val) == 100
     assert len(test) == 100
     sd_code = 1220 # diabetes, umbrella code, includes type I and type II diabetes
-    loader = BinarySDLoader(split_dir, 'random', '20002', ['31', '50', '21002'], sd_code) 
+    loader = BinarySDLoader(split_dir, 'random', '20002', ['31', '50', '21002'], sd_code, na_as_false=False) 
     train = loader.load_train()
     assert train.shape == (607, 4)
     
