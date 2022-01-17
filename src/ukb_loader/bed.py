@@ -70,8 +70,27 @@ def bed_to_bit_zarr(bfile_prefix: str, zarr_path: str, batch_size: int):
                 print(f'samples {i}:{i+batch_size}, variants {j}:{j+snp_chunk_size*4} are read and recoded')
 
 
+def bed_to_simple_bit_zarr(bfile_prefix: str, zarr_path: str, batch_size: int):
+    with open_bed(bfile_prefix + '.bed', num_threads=2) as bed:
+        group = zarr.open_group(zarr_path)
+        group.create_dataset('samples', data=bed.iid.astype(int), mode='w', overwrite=True)
+        group.create_dataset('positions', data=bed.bp_position, mode='w', overwrite=True)
+        samples, variants = bed.shape
+        
+        snp_chunk_size = variants // (4) + 1
+        array = group.create_dataset('data', shape=(samples, snp_chunk_size),
+                dtype=numpy.uint8, chunks=(batch_size, snp_chunk_size), 
+                mode='w', overwrite=True)
+
+        for i in range(0, samples, batch_size):
+            chunk = bed.read(numpy.s_[i:i+batch_size, :], dtype='int8', num_threads=4)
+            to_write = recode_chunk(chunk)
+            array[i:i+batch_size, :] = to_write
+            print(f'samples {i}:{i+batch_size} were read and recoded')
+
+
 def recode_chunk(chunk):
-    chunk[chunk == -127] = 3
+    chunk[chunk == -127] = 0
     binary_chunk = numpy.zeros((chunk.shape[0], 2*chunk.shape[1]), dtype=numpy.bool8)
 
     binary_chunk[:, ::2] = chunk > 1

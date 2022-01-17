@@ -21,7 +21,7 @@ class UKBDataLoader():
                 raise ValueError(f'Feature {f} should not contain -, we need only a field id without any assessments and array numbers')
 
         self.features = features
-        if array_agg_func not in ['mean', 'max']:
+        if array_agg_func is not None and array_agg_func not in ['mean', 'max']:
             raise ValueError(f'array_agg_func must be one of the ["mean", "max"]')
         self.agg_func = array_agg_func
 
@@ -44,15 +44,18 @@ class UKBDataLoader():
         
         return found, assessment_number + 1, array_number + 1
 
-    def _get_arrayed_target(self, chunk, target_cols, array_count):
+    def _get_arrayed_target(self, chunk, target_cols, array_count) -> numpy.ndarray:
         total_targets = []
         for array_index in range(array_count):
             cols = target_cols[array_index*array_count: (array_index + 1)*array_count]
             targets = chunk[:, cols]
             if self.agg_func == 'max':
                 targets = numpy.nanmax(targets, axis=1)
-            else:
+            elif self.agg_func == 'mean':
                 targets = numpy.nanmean(targets, axis=1)
+            else:
+                pass
+                # no aggregation
             total_targets.append(targets)
 
         return numpy.column_stack(total_targets)
@@ -64,7 +67,11 @@ class UKBDataLoader():
             targets = chunk[:, target_cols]
         assessment_indices = targets.shape[1] - numpy.argmax(numpy.flip(~numpy.isnan(targets), axis=1), axis=1) - 1
         true_target = targets[numpy.arange(targets.shape[0]), assessment_indices].reshape(-1, 1)
-
+        # ugly hack for arrayed target without aggregation
+        # for example PCA componenets, field 22009-0.{1-40}
+        if array_count > 1 and self.agg_func is None:
+            assessment_indices = assessment_indices // array_count
+            true_target = targets
         features = []
         for fc in feature_cols:
             f = chunk[:, fc]
@@ -92,7 +99,7 @@ class UKBDataLoader():
 
         targets = numpy.vstack(targets)
         all_features = numpy.vstack(all_features)
-        mask = ~numpy.isnan(targets).squeeze(1)
+        mask = ~numpy.isnan(targets)[:, 0]
         return targets[mask], all_features[mask], mask
 
     def _load(self, dataset):
@@ -100,7 +107,10 @@ class UKBDataLoader():
 
         data = numpy.concatenate([features, targets], axis=1)
         eid = dataset['eid'][:][mask]
-        frame = pandas.DataFrame(data=data, columns=self.features + [self.phenotype_id], index=eid.squeeze(1) if len(eid.shape) == 2 else eid)
+        pheno_columns = [self.phenotype_id]
+        if targets.shape[1] > 1:
+            pheno_columns = [f'{self.phenotype_id}-a.{i}' for i in range(targets.shape[1])]
+        frame = pandas.DataFrame(data=data, columns=self.features + pheno_columns, index=eid.squeeze(1) if len(eid.shape) == 2 else eid)
         return frame
 
     def load_train(self) -> pandas.DataFrame:

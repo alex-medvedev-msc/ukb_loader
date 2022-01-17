@@ -322,3 +322,36 @@ def test_binary_sd_target_prevalence():
 
     prevalence = (train.iloc[:, -1].sum() + val.iloc[:, -1].sum() + test.iloc[:, -1].sum())
     assert 59312 <= prevalence <= 59314
+
+
+def test_no_aggregation_arrayed_target():
+    columns = ['31-0.0', '21002-0.0', '21002-1.0', '21002-2.0']
+    pca_columns = [f'22009-0.{i}' for i in range(1, 41)]
+    columns += pca_columns
+
+    zarr_path = tempfile.TemporaryDirectory().name
+
+    rows_count = 10*1000
+    batch_size = 1000
+    converter = Converter([DATASET_PATH], zarr_path, rows_count=rows_count, columns=columns, batch_size=batch_size)
+
+    converter.convert()
+
+    split_dir = tempfile.TemporaryDirectory().name
+    split_path = os.path.join(split_dir, 'random')
+    splitter = RandomSplitter(zarr_path, split_path, seed=0)
+    train, val, test = splitter.split()
+    assert len(train) == int(rows_count*0.8)
+    assert len(val) == int(rows_count*0.1)
+    assert len(test) == int(rows_count*0.1)
+
+    loader = UKBDataLoader(split_dir, 'random', '22009', ['31', '21002'], array_agg_func=None)
+    
+    train = loader.load_train()
+    assert train.shape[1] == 42
+
+    pca = train.values[:, 2:]
+    assert numpy.isnan(pca).sum() == 0
+    assert -0.05 < pca.mean() < 0.05
+    assert 9 < pca.std() < 11 
+    
