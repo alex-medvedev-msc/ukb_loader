@@ -115,7 +115,7 @@ def test_real_target_all_rows(benchmark):
     benchmark(loader.load_train)
     
 
-def test_real_target_regression(benchmark):
+def test_real_target_regression():
     columns = ['31-0.0', '50-0.0', '50-1.0', '50-2.0', '21002-0.0', '21002-1.0', '21002-2.0']
     
     zarr_path = tempfile.TemporaryDirectory().name
@@ -207,7 +207,8 @@ def test_binary_icd10_target_sexonly():
     
     columns = columns + sd_columns
     zarr_path = tempfile.TemporaryDirectory().name
-    converter = Converter([DATASET_PATH, ICD10_PATH], zarr_path, rows_count=None, columns=columns, batch_size=5000)
+    rows_count = 10000
+    converter = Converter([DATASET_PATH, ICD10_PATH], zarr_path, rows_count=rows_count, columns=columns, batch_size=5000)
 
     converter.convert()
 
@@ -215,9 +216,9 @@ def test_binary_icd10_target_sexonly():
     split_path = os.path.join(split_dir, 'random')
     splitter = RandomSplitter(zarr_path, split_path, seed=0)
     train, val, test = splitter.split()
-    assert 401000 < len(train) < 403000
-    assert 49000 < len(val) < 52000
-    assert 49000 < len(test) < 52000
+    assert len(train) == 8000
+    assert len(val) == 1000
+    assert len(test) == 1000
     icd10_code = 'E119' # E11.9 - non-insulin dependent diabetes mellitus without complications
     loader = BinaryICDLoader(split_dir, 'random', '41270', ['31'], icd10_code) 
     train = loader.load_train()
@@ -242,8 +243,8 @@ def test_binary_icd10_target_sexonly():
 
     un, c = numpy.unique(test.iloc[:, -1], return_counts=True)
     counts.append(c[1])
-    assert 401000 < len(train) < 403000
-    assert sum(counts) == 38791
+    assert 6000 < len(train) < 7000
+    assert 500 < sum(counts) < 600
 
 
 def test_binary_sd_target():
@@ -355,3 +356,54 @@ def test_no_aggregation_arrayed_target():
     assert -0.05 < pca.mean() < 0.05
     assert 9 < pca.std() < 11 
     
+
+def test_real_target_heterozygosity():
+    columns = ['31-0.0', '22027-0.0', '21002-0.0', '21002-1.0', '21002-2.0']
+    
+    zarr_path = tempfile.TemporaryDirectory().name
+    rows_count = 10000
+    batch_size = 1000
+    converter = Converter([DATASET_PATH], zarr_path, rows_count=rows_count, columns=columns, batch_size=batch_size)
+
+    converter.convert()
+
+    split_dir = tempfile.TemporaryDirectory().name
+    split_path = os.path.join(split_dir, 'random')
+    splitter = RandomSplitter(zarr_path, split_path, seed=0)
+    train, val, test = splitter.split()
+
+    loader = UKBDataLoader(split_dir, 'random', '22027', ['31', '21002'])
+    train, val, test = loader.load_train(), loader.load_val(), loader.load_test()
+    # https://biobank.ctsu.ox.ac.uk/crystal/field.cgi?id=22027
+    assert train.shape[0] + val.shape[0] + test.shape[0] > 0.5*968 / (500000 / rows_count)
+
+
+def test_no_aggregation_arrayed_feature():
+    columns = ['31-0.0', '21002-0.0', '21002-1.0', '21002-2.0']
+    pca_columns = [f'22009-0.{i}' for i in range(1, 41)]
+    columns += pca_columns
+
+    zarr_path = tempfile.TemporaryDirectory().name
+
+    rows_count = 10*1000
+    batch_size = 1000
+    converter = Converter([DATASET_PATH], zarr_path, rows_count=rows_count, columns=columns, batch_size=batch_size)
+
+    converter.convert()
+
+    split_dir = tempfile.TemporaryDirectory().name
+    split_path = os.path.join(split_dir, 'random')
+    splitter = RandomSplitter(zarr_path, split_path, seed=0)
+    train, val, test = splitter.split()
+    assert len(train) == int(rows_count*0.8)
+    assert len(val) == int(rows_count*0.1)
+    assert len(test) == int(rows_count*0.1)
+
+    loader = UKBDataLoader(split_dir, 'random', '21002', ['31', '22009'], array_agg_func=None)
+    
+    train = loader.load_train()
+    assert train.shape[1] == 42
+
+    pca = train.loc[:, pca_columns].values
+    assert -0.05 < numpy.nanmean(pca) < 0.05
+    assert 9 < numpy.nanstd(pca) < 11 

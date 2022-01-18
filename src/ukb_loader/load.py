@@ -1,6 +1,6 @@
 import numpy
 import pandas
-from typing import List
+from typing import List, Tuple
 import zarr
 import os
 
@@ -22,7 +22,7 @@ class UKBDataLoader():
 
         self.features = features
         if array_agg_func is not None and array_agg_func not in ['mean', 'max']:
-            raise ValueError(f'array_agg_func must be one of the ["mean", "max"]')
+            raise ValueError(f'array_agg_func must be one of the [None, "mean", "max"]')
         self.agg_func = array_agg_func
 
     def _find_assessment_columns(self, column):
@@ -60,7 +60,7 @@ class UKBDataLoader():
 
         return numpy.column_stack(total_targets)
 
-    def _process_chunk(self, chunk, target_cols, feature_cols, assessment_count, array_count):
+    def _process_chunk(self, chunk, target_cols, feature_descriptions: List[Tuple], assessment_count: int, array_count: int):
         if array_count > 1:
             targets = self._get_arrayed_target(chunk, target_cols, array_count)
         else:
@@ -73,19 +73,20 @@ class UKBDataLoader():
             assessment_indices = assessment_indices // array_count
             true_target = targets
         features = []
-        for fc in feature_cols:
-            f = chunk[:, fc]
-            if len(fc) == 1: # for features like sex
+        for f_cols, _, f_array_count in feature_descriptions:
+            f = chunk[:, f_cols]
+            if len(f_cols) == 1: # for features like sex
                 features.append(f.reshape(-1, 1))
+            elif self.agg_func is None and f_array_count > 1:
+                features.append(f)
             else:
                 features.append(f[numpy.arange(f.shape[0]), assessment_indices].reshape(-1, 1))
         
         features = numpy.hstack(features)
         return true_target, features
 
-    def _load_real_value_target(self, dataset):
+    def _load_real_value_target(self, dataset, feature_descriptions: List[Tuple]):
         target_cols, assessment_count, array_count = self._find_assessment_columns(self.phenotype_id)
-        feature_cols = [self._find_assessment_columns(feature)[0] for feature in self.features]
 
         data = dataset['dataset']
 
@@ -93,7 +94,7 @@ class UKBDataLoader():
         for start in range(0, data.shape[0], data.chunks[0]):
 
             chunk = data[start:start + data.chunks[0]]
-            target, features = self._process_chunk(chunk, target_cols, feature_cols, assessment_count, array_count)
+            target, features = self._process_chunk(chunk, target_cols, feature_descriptions, assessment_count, array_count)
             targets.append(target)
             all_features.append(features)
 
@@ -103,14 +104,22 @@ class UKBDataLoader():
         return targets[mask], all_features[mask], mask
 
     def _load(self, dataset):
-        targets, features, mask = self._load_real_value_target(dataset)
+        feature_descriptions = [self._find_assessment_columns(feature) for feature in self.features]
+        targets, features, mask = self._load_real_value_target(dataset, feature_descriptions)
 
         data = numpy.concatenate([features, targets], axis=1)
         eid = dataset['eid'][:][mask]
         pheno_columns = [self.phenotype_id]
         if targets.shape[1] > 1:
-            pheno_columns = [f'{self.phenotype_id}-a.{i}' for i in range(targets.shape[1])]
-        frame = pandas.DataFrame(data=data, columns=self.features + pheno_columns, index=eid.squeeze(1) if len(eid.shape) == 2 else eid)
+            pheno_columns = [f'{self.phenotype_id}-0.{i}' for i in range(1, targets.shape[1] + 1)]
+        feature_columns = []
+        for feature_name, feature_desc in zip(self.features, feature_descriptions):
+            arr_count = feature_desc[2]
+            if arr_count > 1:
+                feature_columns += [f'{feature_name}-0.{i}' for i in range(1, arr_count)]
+            else:
+                feature_columns.append(feature_name)
+        frame = pandas.DataFrame(data=data, columns=feature_columns + pheno_columns, index=eid.squeeze(1) if len(eid.shape) == 2 else eid)
         return frame
 
     def load_train(self) -> pandas.DataFrame:
@@ -124,7 +133,7 @@ class UKBDataLoader():
 
 
 class BinaryICDLoader():
-    def __init__(self, data_dir: str, split: str, phenotype_col: str, features: List[str], icd10_code: str) -> None:
+    def __init__(self, data_dir: str, split: str, phenotype_col: str, features: List[str], icd10_code: str, array_agg_func='mean') -> None:
         
         self.dataset = zarr.open_group(os.path.join(data_dir, split), mode='r')
         self.train, self.val, self.test = self.dataset['train'], self.dataset['val'], self.dataset['test']
@@ -140,16 +149,30 @@ class BinaryICDLoader():
             if '-' in f:
                 raise ValueError(f'Feature {f} should not contain -, we need only a field id without any assessments and array numbers')
 
+        if array_agg_func is not None and array_agg_func not in ['mean', 'max']:
+            raise ValueError(f'array_agg_func must be one of the [None, "mean", "max"]')
+        self.agg_func = array_agg_func
+
         self.features = features
 
     def _find_assessment_columns(self, column):
+        # 50-1.0 = {phenotype_id}-{assessment_id}.{array_id}
         to_find = column + '-'
+        assessment_number = 0
+        array_number = 0
         found = []
         for i, col in enumerate(self.columns):
             if col[:len(to_find)] == to_find:
                 found.append(i)
+                a = int(col[len(to_find)])
+                if a > assessment_number:
+                    assessment_number = a
+                
+                array_c = int(col[len(to_find) + 2:])
+                if array_c > array_number:
+                    array_number = array_c
         
-        return found
+        return found, assessment_number + 1, array_number + 1
 
     def _find_arrayed_target_columns(self, column):
         to_find = column + '-'
@@ -161,7 +184,7 @@ class BinaryICDLoader():
         
         return found
 
-    def _process_chunk(self, str_chunk, chunk, target_cols, feature_cols):
+    def _process_chunk(self, str_chunk, chunk, target_cols, feature_descriptions):
         codes = []
         codes_na = []
         for i, assessment_cols in enumerate(target_cols):
@@ -177,19 +200,20 @@ class BinaryICDLoader():
         true_target = (codes.sum(axis=1) > 0).astype(int).reshape(-1, 1)
 
         features = []
-        for fc in feature_cols:
-            f = chunk[:, fc]
-            if len(fc) == 1: # for features like sex
+        for f_cols, _, f_array_count in feature_descriptions:
+            f = chunk[:, f_cols]
+            if len(f_cols) == 1: # for features like sex
                 features.append(f.reshape(-1, 1))
+            elif self.agg_func is None and f_array_count > 1:
+                features.append(f)
             else:
                 features.append(f[numpy.arange(f.shape[0]), assessment_indices].reshape(-1, 1))
         
         features = numpy.hstack(features)
         return true_target[~codes_na], features[~codes_na], codes_na
 
-    def _load_binary_icd_target(self, dataset):
+    def _load_binary_icd_target(self, dataset, feature_descriptions):
         target_cols = self._find_arrayed_target_columns(self.phenotype_col)
-        feature_cols = [self._find_assessment_columns(feature) for feature in self.features]
         data = dataset['dataset']
         str_data = dataset['str_dataset']
         targets, all_features, mask = [], [], []
@@ -197,7 +221,7 @@ class BinaryICDLoader():
 
             chunk = data[start:start + data.chunks[0]]
             str_chunk = str_data[start: start + data.chunks[0]]
-            target, features, codes_na = self._process_chunk(str_chunk, chunk, target_cols, feature_cols)
+            target, features, codes_na = self._process_chunk(str_chunk, chunk, target_cols, feature_descriptions)
             targets.append(target)
             all_features.append(features)
             mask.append(codes_na)
@@ -208,10 +232,20 @@ class BinaryICDLoader():
         return targets, all_features, mask
 
     def _load(self, dataset):
-        targets, features, mask = self._load_binary_icd_target(dataset)
+        feature_descriptions = [self._find_assessment_columns(feature) for feature in self.features]
+        targets, features, mask = self._load_binary_icd_target(dataset, feature_descriptions)
+
+        feature_columns = []
+        for feature_name, feature_desc in zip(self.features, feature_descriptions):
+            arr_count = feature_desc[2]
+            if arr_count > 1:
+                feature_columns += [f'{feature_name}-0.{i}' for i in range(1, arr_count)]
+            else:
+                feature_columns.append(feature_name)
+
         eid = dataset['eid'][:][~mask]
         data = numpy.concatenate([features, targets], axis=1)
-        frame = pandas.DataFrame(data=data, columns=self.features + [self.phenotype_col], index=eid.squeeze(1) if len(eid.shape) == 2 else eid)
+        frame = pandas.DataFrame(data=data, columns=feature_columns + [self.phenotype_col], index=eid.squeeze(1) if len(eid.shape) == 2 else eid)
         return frame
 
     def load_train(self) -> pandas.DataFrame:
@@ -225,7 +259,7 @@ class BinaryICDLoader():
 
 
 class BinarySDLoader():
-    def __init__(self, data_dir: str, split: str, phenotype_col: str, features: List[str], sd_code: int, na_as_false: False) -> None:
+    def __init__(self, data_dir: str, split: str, phenotype_col: str, features: List[str], sd_code: int, na_as_false: False, array_agg_func='mean') -> None:
         
         self.dataset = zarr.open_group(os.path.join(data_dir, split), mode='r')
         self.train, self.val, self.test = self.dataset['train'], self.dataset['val'], self.dataset['test']
@@ -241,6 +275,10 @@ class BinarySDLoader():
             if '-' in f:
                 raise ValueError(f'Feature {f} should not contain -, we need only a field id without any assessments and array numbers')
 
+        if array_agg_func is not None and array_agg_func not in ['mean', 'max']:
+            raise ValueError(f'array_agg_func must be one of the [None, "mean", "max"]')
+        self.agg_func = array_agg_func
+        
         self.features = features
 
     def _find_assessment_columns(self, column):
@@ -264,7 +302,7 @@ class BinarySDLoader():
         
         return found
 
-    def _process_chunk(self, chunk, target_cols, feature_cols):
+    def _process_chunk(self, chunk, target_cols, feature_descriptions):
         codes = []
         codes_na = []
         for i, assessment_cols in enumerate(target_cols):
@@ -282,10 +320,12 @@ class BinarySDLoader():
         true_target = (codes.sum(axis=1) > 0).astype(int).reshape(-1, 1)
 
         features = []
-        for fc in feature_cols:
-            f = chunk[:, fc]
-            if len(fc) == 1: # for features like sex
+        for f_cols, _, f_array_count in feature_descriptions:
+            f = chunk[:, f_cols]
+            if len(f_cols) == 1: # for features like sex
                 features.append(f.reshape(-1, 1))
+            elif self.agg_func is None and f_array_count > 1:
+                features.append(f)
             else:
                 features.append(f[numpy.arange(f.shape[0]), assessment_indices].reshape(-1, 1))
         
@@ -296,15 +336,14 @@ class BinarySDLoader():
         else:
             return true_target[~codes_na], features[~codes_na], codes_na
 
-    def _load_binary_sd_target(self, dataset):
+    def _load_binary_sd_target(self, dataset, feature_descriptions):
         target_cols = self._find_arrayed_target_columns(self.phenotype_col)
-        feature_cols = [self._find_assessment_columns(feature) for feature in self.features]
         data = dataset['dataset']
         targets, all_features, mask = [], [], []
         for start in range(0, data.shape[0], data.chunks[0]):
 
             chunk = data[start:start + data.chunks[0]]
-            target, features, codes_na = self._process_chunk(chunk, target_cols, feature_cols)
+            target, features, codes_na = self._process_chunk(chunk, target_cols, feature_descriptions)
             targets.append(target)
             all_features.append(features)
             mask.append(codes_na)
@@ -315,13 +354,22 @@ class BinarySDLoader():
         return targets, all_features, mask
 
     def _load(self, dataset):
-        targets, features, mask = self._load_binary_sd_target(dataset)
+        feature_descriptions = [self._find_assessment_columns(feature) for feature in self.features]
+        targets, features, mask = self._load_binary_sd_target(dataset, feature_descriptions)
         if self.na_as_false:
             eid = dataset['eid'][:]
         else:
             eid = dataset['eid'][:][~mask]
+
+        feature_columns = []
+        for feature_name, feature_desc in zip(self.features, feature_descriptions):
+            arr_count = feature_desc[2]
+            if arr_count > 1:
+                feature_columns += [f'{feature_name}-0.{i}' for i in range(1, arr_count)]
+            else:
+                feature_columns.append(feature_name)
         data = numpy.concatenate([features, targets], axis=1)
-        frame = pandas.DataFrame(data=data, columns=self.features + [self.phenotype_col], index=eid.squeeze(1) if len(eid.shape) == 2 else eid)
+        frame = pandas.DataFrame(data=data, columns=feature_columns + [self.phenotype_col], index=eid.squeeze(1) if len(eid.shape) == 2 else eid)
         return frame
 
     def load_train(self) -> pandas.DataFrame:
